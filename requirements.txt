@@ -1,11 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  Voice AI Agent — Python Dependencies
 #
-#  Strategy: let pipecat-ai resolve its own sub-dependencies (livekit,
-#  pydantic, openai, deepgram etc). Only pin packages pipecat doesn't touch.
+#  Rule: pipecat-ai owns livekit, livekit-api, openai, deepgram, pydantic.
+#  Do NOT pin any of those here — pipecat resolves them.
+#  Only pin packages pipecat has no opinion on.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Core AI pipeline — owns livekit, pydantic, openai, deepgram as sub-deps
+# Core AI pipeline (owns: livekit, livekit-api, openai, deepgram, pydantic)
 pipecat-ai[deepgram,openai,elevenlabs,silero,livekit]==0.0.47
 
 # Web server
@@ -15,9 +16,6 @@ python-multipart==0.0.9
 
 # Twilio SDK
 twilio==9.2.3
-
-# LiveKit API (admin SDK — separate from livekit client owned by pipecat)
-livekit-api==0.6.0
 
 # Knowledge base
 chromadb==0.5.3
