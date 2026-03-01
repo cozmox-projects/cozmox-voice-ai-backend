@@ -176,8 +176,13 @@ class AgentWorker:
         """
         Reads audio frames from the caller and sends them to Deepgram.
         Runs continuously for the duration of the call.
+
+        rtc.AudioStream always outputs int16 PCM. We request 8000Hz explicitly
+        to match Deepgram's expected sample_rate=8000 linear16 config.
+        Without specifying sample_rate, LiveKit defaults to 48000Hz which
+        would cause Deepgram to produce garbled/no transcripts.
         """
-        audio_stream = rtc.AudioStream(track)
+        audio_stream = rtc.AudioStream(track, sample_rate=8000, num_channels=1)
         log.debug("receiving_caller_audio", call_id=self.call_id)
 
         try:

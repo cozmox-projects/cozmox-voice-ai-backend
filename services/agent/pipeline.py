@@ -88,6 +88,9 @@ class VoiceAIPipeline:
 
     async def start(self):
         """Start the pipeline. Called after connecting to LiveKit room."""
+        import time
+
+        self._pipeline_start_time = time.perf_counter()
         self._is_running = True
         log.info("pipeline_started", call_id=self.call_id)
 
@@ -116,7 +119,11 @@ class VoiceAIPipeline:
             interim_results=True,
             utterance_end_ms="1000",
             vad_events=True,
-            encoding="mulaw",
+            # LiveKit AudioStream always delivers int16 PCM frames regardless
+            # of the source encoding. Do NOT use "mulaw" here — that caused
+            # Deepgram to receive PCM bytes it interpreted as mulaw, producing
+            # zero transcripts.
+            encoding="linear16",
             sample_rate=8000,
             channels=1,
         )
@@ -140,6 +147,16 @@ class VoiceAIPipeline:
 
         async def on_speech_started(self_dg, speech_started, **kwargs):
             self.turn_detector.on_speech_start()
+            # Guard: ignore speech events in the first second after pipeline start.
+            # The agent's own TTS greeting audio can loop back through the room
+            # and trigger a false barge-in before the caller has said anything.
+            import time
+
+            if (
+                hasattr(self, "_pipeline_start_time")
+                and (time.perf_counter() - self._pipeline_start_time) < 1.0
+            ):
+                return
             if self.barge_in.on_speech_detected():
                 await self._cancel_current_tts()
 
