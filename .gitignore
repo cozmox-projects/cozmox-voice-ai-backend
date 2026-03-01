@@ -1,1 +1,4 @@
 .env
+.env.inspired
+.env.local
+.env.prod
