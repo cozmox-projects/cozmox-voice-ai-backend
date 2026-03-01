@@ -184,7 +184,7 @@ class AgentWorker:
             async for frame_event in audio_stream:
                 audio_bytes = bytes(frame_event.frame.data)
                 if self._dg_connection:
-                    self._dg_connection.send(audio_bytes)
+                    await self._dg_connection.send(audio_bytes)
         except Exception as e:
             log.error("audio_receive_error", call_id=self.call_id, error=str(e))
 
@@ -194,28 +194,21 @@ class AgentWorker:
 
         ElevenLabs returns μ-law (ulaw) encoded audio at 8kHz.
         LiveKit AudioFrame requires int16 PCM samples.
-        We decode μ-law → int16 PCM here before wrapping in the frame.
+        We use Python's audioop.ulaw2lin() which implements ITU-T G.711 correctly.
         """
         if not self._audio_source or not audio_bytes:
             return
         try:
-            import numpy as np
+            import audioop
 
-            # μ-law → int16 PCM (ITU-T G.711 decompression)
-            ulaw = np.frombuffer(audio_bytes, dtype=np.uint8).astype(np.int16)
-            ulaw_inv = ~ulaw
-            sign = ulaw_inv & 0x80
-            exponent = (ulaw_inv >> 4) & 0x07
-            mantissa = ulaw_inv & 0x0F
-            pcm = ((mantissa << 1) + 33) << exponent
-            pcm = np.where(sign != 0, -pcm, pcm).astype(np.int16)
+            # μ-law → int16 PCM (ITU-T G.711, width=2 means 16-bit output)
+            pcm_bytes = audioop.ulaw2lin(audio_bytes, 2)
 
-            # samples_per_channel = number of int16 samples (NOT number of bytes)
             frame = rtc.AudioFrame(
-                data=pcm.tobytes(),
+                data=pcm_bytes,
                 sample_rate=8000,
                 num_channels=1,
-                samples_per_channel=len(pcm),
+                samples_per_channel=len(pcm_bytes) // 2,
             )
             await self._audio_source.capture_frame(frame)
         except Exception as e:
