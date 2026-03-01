@@ -15,30 +15,30 @@ Flow:
 Barge-in is handled by BargeInController running alongside this pipeline.
 One instance of this class is created per call.
 """
+
 import asyncio
 import time
-from typing import Optional, AsyncGenerator
+from typing import Any, Optional
 
-from openai import AsyncAzureOpenAI
 import httpx
+
+# Deepgram v3 — use asyncwebsocket (asynclive deprecated since 3.4.0)
+from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
+from openai import AsyncAzureOpenAI
 
 from config import get_settings
 from logger import get_logger
-from services.agent.prompts import SYSTEM_PROMPT, RAG_CONTEXT_TEMPLATE
 from services.agent.barge_in import BargeInController
+from services.agent.prompts import RAG_CONTEXT_TEMPLATE, SYSTEM_PROMPT
 from services.agent.turn_detector import TurnDetector
 from services.knowledge.retriever import KnowledgeRetriever
-from services.metrics.latency_tracker import LatencyTracker
 from services.metrics.collector import (
-    stt_errors_total,
     llm_errors_total,
+    stt_errors_total,
     tts_errors_total,
 )
+from services.metrics.latency_tracker import LatencyTracker
 from services.resilience.circuit_breaker import llm_circuit_breaker
-from services.resilience.retry_policy import retry_ai_call
-
-import deepgram
-from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 
 log = get_logger(__name__)
 settings = get_settings()
@@ -47,19 +47,14 @@ settings = get_settings()
 class VoiceAIPipeline:
     """
     Manages the complete STT → LLM → TTS pipeline for one call.
-    
+
     Args:
         call_id:    Unique ID for this call (e.g. "call-twilio-CA123")
         room_name:  LiveKit room name this agent is connected to
         send_audio: Async callable that sends audio bytes back to LiveKit
     """
 
-    def __init__(
-        self,
-        call_id: str,
-        room_name: str,
-        send_audio_callback,
-    ):
+    def __init__(self, call_id: str, room_name: str, send_audio_callback):
         self.call_id = call_id
         self.room_name = room_name
         self._send_audio = send_audio_callback
@@ -67,8 +62,7 @@ class VoiceAIPipeline:
         # Sub-components
         self.barge_in = BargeInController(call_id=call_id)
         self.turn_detector = TurnDetector(
-            call_id=call_id,
-            on_turn_end=self._on_turn_end,
+            call_id=call_id, on_turn_end=self._on_turn_end
         )
         self.retriever = KnowledgeRetriever()
         self.latency_tracker = LatencyTracker(call_id=call_id)
@@ -98,31 +92,15 @@ class VoiceAIPipeline:
         log.info("pipeline_started", call_id=self.call_id)
 
         # Greet the caller
-        await self._speak(
-            "Hello! Thank you for calling Acme Corp. How can I help you today?"
-        )
+        await self._speak("Hello! Thank you for calling. How can I help you today?")
 
     async def stop(self):
         """Gracefully shut down the pipeline."""
         self._is_running = False
         if self._current_tts_task and not self._current_tts_task.done():
             self._current_tts_task.cancel()
-        log.info("pipeline_stopped", call_id=self.call_id)
 
-    # ── Audio input (called by LiveKit audio receiver) ────────────────────────
-
-    async def process_audio_chunk(self, audio_bytes: bytes):
-        """
-        Entry point for incoming audio from the caller.
-        Audio chunks are fed into Deepgram's streaming STT.
-        """
-        if not self._is_running:
-            return
-        # In real Pipecat integration this is handled by the transport layer.
-        # This method exists for direct/test usage.
-        pass
-
-    # ── Deepgram STT integration ──────────────────────────────────────────────
+    # ── Deepgram connection ───────────────────────────────────────────────────
 
     async def create_deepgram_connection(self):
         """
@@ -135,43 +113,34 @@ class VoiceAIPipeline:
             model="nova-2",
             language="en-US",
             smart_format=True,
-            interim_results=True,       # stream partial results for lower latency
-            utterance_end_ms=1000,      # used alongside our turn detector
-            vad_events=True,            # VAD events for barge-in detection
-            encoding="mulaw",           # Twilio sends μ-law audio
-            sample_rate=8000,           # standard telephone audio
+            interim_results=True,
+            utterance_end_ms="1000",
+            vad_events=True,
+            encoding="mulaw",
+            sample_rate=8000,
             channels=1,
         )
 
-        connection = dg_client.listen.asynclive.v("1")
+        # asyncwebsocket is the current API (asynclive deprecated in 3.4+)
+        connection = dg_client.listen.asyncwebsocket.v("1")
 
         # ── Deepgram event handlers ───────────────────────────────────────
 
         async def on_transcript(self_dg, result, **kwargs):
             try:
                 sentence = result.channel.alternatives[0].transcript
-                is_final = result.is_final
-
                 if not sentence:
                     return
-
                 self.turn_detector.on_transcript_update(sentence)
-
-                if is_final:
-                    log.debug(
-                        "stt_final_transcript",
-                        call_id=self.call_id,
-                        text=sentence,
-                    )
-
+                if result.is_final:
+                    log.debug("stt_final", call_id=self.call_id, text=sentence)
             except Exception as e:
                 stt_errors_total.inc()
-                log.error("stt_transcript_error", call_id=self.call_id, error=str(e))
+                log.error("stt_error", call_id=self.call_id, error=str(e))
 
         async def on_speech_started(self_dg, speech_started, **kwargs):
             self.turn_detector.on_speech_start()
-            was_barge_in = self.barge_in.on_speech_detected()
-            if was_barge_in:
+            if self.barge_in.on_speech_detected():
                 await self._cancel_current_tts()
 
         async def on_utterance_end(self_dg, utterance_end, **kwargs):
@@ -219,18 +188,17 @@ class VoiceAIPipeline:
         system_content = SYSTEM_PROMPT
         if kb_context:
             system_content += RAG_CONTEXT_TEMPLATE.format(context=kb_context)
-
         messages = [{"role": "system", "content": system_content}]
 
         # Add conversation history (last N turns)
-        messages.extend(self._conversation_history[-self._max_history_turns:])
+        messages.extend(self._conversation_history[-self._max_history_turns :])
 
         # Add current user message
         messages.append({"role": "user", "content": user_text})
 
         return messages
 
-    # ── LLM (Azure OpenAI) ────────────────────────────────────────────────────
+    # ── LLM ───────────────────────────────────────────────────────────────────
 
     async def _llm_to_tts(self, messages: list):
         """
@@ -238,17 +206,18 @@ class VoiceAIPipeline:
         As tokens arrive, builds sentences and pipes them to TTS.
         This is the key to low latency — we don't wait for the full response.
         """
+
         async def _call_llm():
             return await self._llm_client.chat.completions.create(
                 model=settings.azure_openai_deployment,
                 messages=messages,
                 stream=True,
-                max_tokens=150,      # keep responses short for voice
+                max_tokens=150,
                 temperature=0.7,
             )
 
         try:
-            stream = await llm_circuit_breaker.call(_call_llm)
+            stream = await llm_circuit_breaker.call(_call)
 
             # If circuit breaker returned fallback string
             if isinstance(stream, str):
@@ -262,22 +231,20 @@ class VoiceAIPipeline:
             async for chunk in stream:
                 if not self._is_running:
                     break
-
-                token = chunk.choices[0].delta.content if chunk.choices else None
-                if token is None:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                token = getattr(delta, "content", None) if delta else None
+                if not token:
                     continue
-
                 if first_token:
                     self.latency_tracker.llm_first_token()
                     first_token = False
-
                 full_response += token
                 sentence_buffer += token
 
                 # Send to TTS as soon as we have a complete sentence
                 # This starts audio playback before the full response is done
                 if any(sentence_buffer.endswith(p) for p in [".", "!", "?", ","]):
-                    if len(sentence_buffer.strip()) > 10:  # skip tiny fragments
+                    if len(sentence_buffer.strip()) > 10:
                         self._current_tts_task = asyncio.create_task(
                             self._speak(sentence_buffer.strip())
                         )
@@ -297,11 +264,9 @@ class VoiceAIPipeline:
         except Exception as e:
             llm_errors_total.inc()
             log.error("llm_error", call_id=self.call_id, error=str(e))
-            await self._speak(
-                "I'm sorry, I encountered an issue. Could you repeat that?"
-            )
+            await self._speak("I'm sorry, I had a problem. Could you repeat that?")
 
-    # ── ElevenLabs TTS ────────────────────────────────────────────────────────
+    # ── TTS ───────────────────────────────────────────────────────────────────
 
     async def _speak(self, text: str):
         """
@@ -310,48 +275,40 @@ class VoiceAIPipeline:
         """
         if not text.strip():
             return
-
         self.barge_in.on_tts_started()
-
         try:
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}/stream"
-
+            url = (
+                f"https://api.elevenlabs.io/v1/text-to-speech"
+                f"/{settings.elevenlabs_voice_id}/stream"
+            )
             headers = {
                 "xi-api-key": settings.elevenlabs_api_key,
                 "Content-Type": "application/json",
             }
-
             payload = {
                 "text": text,
-                "model_id": "eleven_turbo_v2_5",   # fastest model
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.8,
-                    "speed": 1.0,
-                },
-                "output_format": "ulaw_8000",        # μ-law 8kHz for Twilio
+                "model_id": "eleven_turbo_v2_5",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.8},
+                "output_format": "ulaw_8000",
             }
-
             first_chunk = True
-
             async with httpx.AsyncClient(timeout=30) as client:
-                async with client.stream("POST", url, headers=headers, json=payload) as response:
-                    response.raise_for_status()
+                async with client.stream(
+                    "POST", url, headers=headers, json=payload
+                ) as resp:
+                    resp.raise_for_status()
 
-                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                    async for chunk in resp.aiter_bytes(chunk_size=1024):
                         # Check for barge-in before sending each chunk
                         if self.barge_in._interrupt_event.is_set():
-                            log.info("tts_cancelled_barge_in", call_id=self.call_id)
                             break
-
                         if first_chunk:
                             self.latency_tracker.tts_first_audio()
-                            self.latency_tracker.report()  # record complete E2E latency
+                            self.latency_tracker.report()
                             first_chunk = False
 
                         # Send audio back to caller via LiveKit
                         await self._send_audio(chunk)
-
         except asyncio.CancelledError:
             log.info("tts_task_cancelled", call_id=self.call_id)
         except Exception as e:

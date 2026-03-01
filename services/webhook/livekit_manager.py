@@ -4,9 +4,11 @@ services/webhook/livekit_manager.py
 Creates LiveKit rooms and generates access tokens.
 Used by the webhook service when a new call comes in.
 """
+
 import asyncio
-from livekit.api import LiveKitAPI, AccessToken, VideoGrants
-from livekit.api.room_service import CreateRoomRequest
+
+from livekit.api import AccessToken, CreateRoomRequest, LiveKitAPI, VideoGrants
+
 from config import get_settings
 from logger import get_logger
 
@@ -24,14 +26,16 @@ class LiveKitManager:
         """
         try:
             async with LiveKitAPI(
-                url=settings.livekit_url.replace("ws://", "http://").replace("wss://", "https://"),
+                url=settings.livekit_url.replace("ws://", "http://").replace(
+                    "wss://", "https://"
+                ),
                 api_key=settings.livekit_api_key,
                 api_secret=settings.livekit_api_secret,
             ) as lk_api:
                 await lk_api.room.create_room(
                     CreateRoomRequest(
                         name=room_name,
-                        empty_timeout=300,   # close room after 5 min of inactivity
+                        empty_timeout=300,  # close room after 5 min of inactivity
                         max_participants=10,
                     )
                 )
@@ -56,8 +60,8 @@ class LiveKitManager:
                 VideoGrants(
                     room_join=True,
                     room=room_name,
-                    can_publish=True,      # caller publishes their voice
-                    can_subscribe=True,    # caller receives agent voice
+                    can_publish=True,  # caller publishes their voice
+                    can_subscribe=True,  # caller receives agent voice
                 )
             )
             .to_jwt()
@@ -72,6 +76,7 @@ class LiveKitManager:
 
 # Singleton
 _livekit_manager = None
+
 
 def get_livekit_manager() -> LiveKitManager:
     global _livekit_manager

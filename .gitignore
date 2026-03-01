@@ -2,3 +2,10 @@
 .env.inspired
 .env.local
 .env.prod
+
+venv/
+data/
+logs/
+
+__pycache__/
+
