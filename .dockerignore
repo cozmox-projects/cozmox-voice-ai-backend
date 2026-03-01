@@ -1,0 +1,28 @@
+# Don't copy these into the Docker image
+
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data — these are mounted as volumes
+data/
+logs/
+
+# Git
+.git/
+.gitignore
+
+# Local dev
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store

@@ -1,33 +1,75 @@
 version: "3.9"
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Voice AI Agent — Docker Compose (AWS Ubuntu VM)
+#  Voice AI Agent — Docker Compose (full stack, AWS Ubuntu VM)
 #
-#  Services:
-#    livekit     → Real-time audio SFU (port 7880, 7881, 7882/udp)
-#    redis       → Call state coordination
-#    prometheus  → Metrics collection (port 9090)
-#    grafana     → Metrics dashboard (port 3000)
-#    nginx       → Reverse proxy + SSL termination (port 80, 443)
+#  All services run in Docker:
+#    webhook     → FastAPI app (your Python code)
+#    livekit     → Real-time audio SFU
+#    redis       → Call state
+#    prometheus  → Metrics collection
+#    grafana     → Metrics dashboard
+#    nginx       → Reverse proxy on port 80
 #
 #  Usage:
-#    docker-compose up -d
-#    docker-compose logs -f livekit
-#    docker-compose ps
-#
-#  NOTE: The Python webhook service + agent workers run directly on the VM
-#  (not in Docker) so they can use the GPU/CPU efficiently and be managed
-#  by systemd. See README for the full startup sequence.
+#    docker compose up -d              # start everything
+#    docker compose logs -f webhook    # tail webhook logs
+#    docker compose ps                 # check all service status
+#    docker compose down               # stop everything
+#    docker compose build --no-cache   # rebuild after code changes
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
+  # ── Webhook Service (your Python FastAPI app) ─────────────────────────────
+  webhook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webhook
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000" # only accessible within the VM, nginx proxies it
+    volumes:
+      - chromadb_data:/app/data/chromadb # persist the knowledge base
+      - ./logs:/app/logs # persist logs on host
+    depends_on:
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - voice-ai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
-  # ── LiveKit Server ───────────────────────────────────────────────────────
+  # ── Knowledge Base Seeder (runs once then exits) ──────────────────────────
+  # Seeds ChromaDB with documents on first start. Skip if already seeded.
+  seeder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seeder
+    env_file: .env
+    volumes:
+      - chromadb_data:/app/data/chromadb
+    command: ["python", "scripts/seed_knowledge_base.py"]
+    depends_on:
+      - webhook
+    networks:
+      - voice-ai-net
+    restart: "no" # run once and exit
+
+  # ── LiveKit Server ────────────────────────────────────────────────────────
   livekit:
     image: livekit/livekit-server:latest
     container_name: livekit
     restart: unless-stopped
-    network_mode: host          # host networking needed for UDP RTC on AWS
+    network_mode: host # REQUIRED for UDP WebRTC to work on AWS
     volumes:
       - ./infra/livekit.yaml:/etc/livekit.yaml:ro
     command: --config /etc/livekit.yaml
@@ -35,32 +77,34 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:7880/"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 10s
 
-  # ── Redis ─────────────────────────────────────────────────────────────────
+  # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
     image: redis:7.2-alpine
     container_name: redis
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"   # bind to localhost only on AWS
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - voice-ai-net
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
 
-  # ── Prometheus ───────────────────────────────────────────────────────────
+  # ── Prometheus ────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: prometheus
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9090:9090"   # internal only — accessed via nginx
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -69,8 +113,8 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=7d"
       - "--web.enable-lifecycle"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # lets Prometheus scrape host services
+    networks:
+      - voice-ai-net
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
       interval: 15s
@@ -83,7 +127,7 @@ services:
     container_name: grafana
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"   # internal only — accessed via nginx
+      - "127.0.0.1:3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
@@ -95,6 +139,8 @@ services:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - prometheus
+    networks:
+      - voice-ai-net
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 15s
@@ -102,10 +148,6 @@ services:
       retries: 3
 
   # ── Nginx ─────────────────────────────────────────────────────────────────
-  # Reverse proxy. Routes:
-  #   /           → webhook service (port 8000)
-  #   /grafana/   → Grafana (port 3000)
-  #   /prometheus/ → Prometheus (port 9090)
   nginx:
     image: nginx:1.27-alpine
     container_name: nginx
@@ -114,19 +156,24 @@ services:
       - "80:80"
     volumes:
       - ./infra/nginx.conf:/etc/nginx/nginx.conf:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
+      - webhook
       - grafana
       - prometheus
+    networks:
+      - voice-ai-net
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/health"]
       interval: 10s
       timeout: 3s
       retries: 3
 
-
 volumes:
+  chromadb_data: # knowledge base — persists across restarts
   redis_data:
   prometheus_data:
   grafana_data:
+
+networks:
+  voice-ai-net:
+    driver: bridge
