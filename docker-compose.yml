@@ -20,6 +20,7 @@ version: "3.9"
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
+  # ── Webhook Service (your Python FastAPI app) ─────────────────────────────
   webhook:
     build:
       context: .
@@ -63,7 +64,7 @@ services:
     image: livekit/livekit-server:latest
     container_name: livekit
     restart: unless-stopped
-    network_mode: host
+    network_mode: host # REQUIRED for UDP WebRTC to work on AWS
     volumes:
       - ./infra/livekit.yaml:/etc/livekit.yaml:ro
     command: --config /etc/livekit.yaml
@@ -148,8 +149,13 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443" # LiveKit WSS endpoint — required for browser wss:// connections
     volumes:
       - ./infra/nginx.conf:/etc/nginx/nginx.conf:ro
+      # OPTION A (Let's Encrypt): mount the full letsencrypt directory
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
+      # OPTION B (self-signed): mount the certs directory
+      - /etc/nginx/certs:/etc/nginx/certs:ro
     depends_on:
       webhook:
         condition: service_healthy

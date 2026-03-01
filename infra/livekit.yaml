@@ -19,13 +19,13 @@ rtc:
 
 # API keys — must match .env LIVEKIT_API_KEY / LIVEKIT_API_SECRET
 keys:
-  devkey: devsecret
+  voice-prod: Vn9Fh8n3WkLq2ZpT6aYxR0uBcDeFgHiJkLmNoPqRsTu=
 
 # Room settings
 room:
-  empty_timeout: 300        # close empty rooms after 5 min
-  max_participants: 10      # per room: 1 caller + 1 agent + headroom
-  auto_create: true         # auto-create rooms on first participant join
+  empty_timeout: 300 # close empty rooms after 5 min
+  max_participants: 10 # per room: 1 caller + 1 agent + headroom
+  auto_create: true # auto-create rooms on first participant join
 
 # Logging
 logging:
@@ -35,4 +35,4 @@ logging:
 # Limits (for 100 concurrent calls)
 limit:
   num_tracks: 1000
-  bytes_per_sec: 209715200  # 200 MB/s total bandwidth
+  bytes_per_sec: 209715200 # 200 MB/s total bandwidth
