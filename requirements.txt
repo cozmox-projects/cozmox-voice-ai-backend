@@ -1,11 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  Voice AI Agent — Python Dependencies
+#
+#  Strategy: let pipecat-ai resolve its own sub-dependencies (livekit,
+#  pydantic, openai, deepgram etc). Only pin packages pipecat doesn't touch.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Core framework
+# Core AI pipeline — owns livekit, pydantic, openai, deepgram as sub-deps
 pipecat-ai[deepgram,openai,elevenlabs,silero,livekit]==0.0.47
 
-# Web server (webhook handler)
+# Web server
 fastapi==0.111.0
 uvicorn[standard]==0.30.1
 python-multipart==0.0.9
@@ -13,28 +16,23 @@ python-multipart==0.0.9
 # Twilio SDK
 twilio==9.2.3
 
-# LiveKit SDK
-livekit==0.11.1
+# LiveKit API (admin SDK — separate from livekit client owned by pipecat)
 livekit-api==0.6.0
-
-# Azure OpenAI
-openai==1.35.3
 
 # Knowledge base
 chromadb==0.5.3
 sentence-transformers==3.0.1
 
-# Metrics / observability
+# Metrics
 prometheus-client==0.20.0
 prometheus-fastapi-instrumentator==7.0.0
 
 # Resilience
-tenacity==8.4.1          # retry + backoff
-circuitbreaker==2.0.0    # circuit breaker
+tenacity==8.4.1
+circuitbreaker==2.0.0
 
 # Utilities
 python-dotenv==1.0.1
-pydantic>=2.8.2
 pydantic-settings>=2.3.4
 structlog==24.2.0
 httpx==0.27.0
