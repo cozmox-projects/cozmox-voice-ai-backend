@@ -76,22 +76,22 @@ services:
       start_period: 10s
 
   # ── Redis ──────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7.2-alpine
-    container_name: redis
-    restart: unless-stopped
-    ports:
-      - "0.0.0.0:6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    networks:
-      - voice-ai-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
+  # redis:
+  #   image: redis:7.2-alpine
+  #   container_name: redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "0.0.0.0:6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+  #   networks:
+  #     - voice-ai-net
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
 
   # ── Prometheus ────────────────────────────────────────────────────────────
   prometheus:
@@ -172,7 +172,7 @@ services:
 
 volumes:
   chromadb_data: # knowledge base — persists across restarts
-  redis_data:
+  # redis_data:
   prometheus_data:
   grafana_data:
 

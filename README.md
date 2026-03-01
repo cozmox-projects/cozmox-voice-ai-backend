@@ -202,7 +202,7 @@ Expected output:
 ```
 NAME         STATUS    PORTS
 livekit      running   (host network)
-redis        running   127.0.0.1:6379->6379/tcp
+<!-- redis        running   127.0.0.1:6379->6379/tcp -->
 prometheus   running   127.0.0.1:9090->9090/tcp
 grafana      running   127.0.0.1:3000->3000/tcp
 nginx        running   0.0.0.0:80->80/tcp
