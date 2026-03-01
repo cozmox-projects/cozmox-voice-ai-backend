@@ -176,6 +176,19 @@ class VoiceAIPipeline:
         await connection.start(options)
         log.info("deepgram_connection_open", call_id=self.call_id)
 
+        # Keepalive: Deepgram closes idle connections after ~12s without audio.
+        # During agent TTS playback, no caller audio is sent. This task pings
+        # Deepgram every 8s to keep the connection alive for the call's duration.
+        async def _keepalive():
+            try:
+                while True:
+                    await asyncio.sleep(8)
+                    await connection.keep_alive()
+            except Exception:
+                pass  # connection closed, task ends naturally
+
+        asyncio.ensure_future(_keepalive())
+
         return connection
 
     # ── Turn end → LLM ────────────────────────────────────────────────────────
@@ -323,6 +336,18 @@ class VoiceAIPipeline:
                             self.latency_tracker.tts_first_audio()
                             self.latency_tracker.report()
                             first_chunk = False
+                            # DIAGNOSTIC: log what ElevenLabs actually sends
+                            log.info(
+                                "tts_chunk_diagnostic",
+                                call_id=self.call_id,
+                                content_type=resp.headers.get(
+                                    "content-type", "unknown"
+                                ),
+                                chunk_len=len(chunk),
+                                first_8_bytes=chunk[:8].hex(),
+                                is_riff=chunk[:4] == b"RIFF",
+                                is_id3=chunk[:3] == b"ID3",
+                            )
 
                         # Send audio back to caller via LiveKit
                         await self._send_audio(chunk)
