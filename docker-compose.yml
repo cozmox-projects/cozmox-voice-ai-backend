@@ -153,9 +153,7 @@ services:
     volumes:
       - ./infra/nginx.conf:/etc/nginx/nginx.conf:ro
       # OPTION A (Let's Encrypt): mount the full letsencrypt directory
-      # - /etc/letsencrypt:/etc/letsencrypt:ro
-      # OPTION B (self-signed): mount the certs directory
-      - /etc/nginx/certs:/etc/nginx/certs:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       webhook:
         condition: service_healthy
