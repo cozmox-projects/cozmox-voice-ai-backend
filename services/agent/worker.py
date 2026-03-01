@@ -79,8 +79,15 @@ class AgentWorker:
         self._room = rtc.Room()
 
         # Connect to LiveKit room
+        # auto_subscribe=True is REQUIRED — without it LiveKit will not deliver
+        # remote audio tracks to this agent, causing Deepgram to receive no audio
+        # and close with 1011 after ~12 seconds.
         token = self._generate_token()
-        await self._room.connect(settings.livekit_url, token)
+        await self._room.connect(
+            settings.livekit_url,
+            token,
+            options=rtc.RoomOptions(auto_subscribe=True),
+        )
         log.info("worker_connected_to_room", call_id=self.call_id, room=self.room_name)
 
         # Create an audio source — this is how we send TTS audio to the caller
@@ -115,11 +122,17 @@ class AgentWorker:
         - Starts the AI pipeline greeting
         - Waits for call to end
         """
-        await self._pipeline.start()
+        # Guard: ensure pipeline.start() and _receive_caller_audio() are only
+        # invoked once even if multiple audio tracks arrive (e.g. reconnects,
+        # multiple participants in simulate mode).
+        pipeline_started = False
 
-        # Subscribe to remote participants' audio (i.e., the caller)
+        # Register the track handler BEFORE pipeline.start() and BEFORE checking
+        # existing participants. This avoids a race where the event fires between
+        # the two checks.
         @self._room.on("track_subscribed")
         def on_track_subscribed(track, publication, participant):
+            nonlocal pipeline_started
             if isinstance(track, rtc.RemoteAudioTrack):
                 log.info(
                     "caller_audio_subscribed",
@@ -127,6 +140,27 @@ class AgentWorker:
                     participant=participant.identity,
                 )
                 asyncio.ensure_future(self._receive_caller_audio(track))
+                if not pipeline_started:
+                    pipeline_started = True
+                    asyncio.ensure_future(self._pipeline.start())
+
+        # Also handle participants who were ALREADY in the room before we connected.
+        # This happens in simulate mode where the caller joins before the agent,
+        # meaning track_subscribed already fired before our handler was registered.
+        for participant in self._room.remote_participants.values():
+            for publication in participant.track_publications.values():
+                if publication.track and isinstance(
+                    publication.track, rtc.RemoteAudioTrack
+                ):
+                    log.info(
+                        "subscribing_to_existing_audio_track",
+                        call_id=self.call_id,
+                        participant=participant.identity,
+                    )
+                    asyncio.ensure_future(self._receive_caller_audio(publication.track))
+                    if not pipeline_started:
+                        pipeline_started = True
+                        asyncio.ensure_future(self._pipeline.start())
 
         # Wait for disconnect event (call ended)
         disconnect_event = asyncio.Event()
