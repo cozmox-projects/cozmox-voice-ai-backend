@@ -1,4 +1,5 @@
 # 🎙️ Voice AI Agent
+
 ### Production-ready voice AI system — 100 concurrent PSTN calls
 
 **Stack:** Twilio → LiveKit → Pipecat → Deepgram + Azure OpenAI + ElevenLabs → ChromaDB  
@@ -31,17 +32,19 @@
 ```
 Caller's phone
       ↓
-  Twilio (phone number → WebSocket audio)
+  Twilio (PSTN → WebSocket with JSON envelope)
       ↓
   Webhook Service (FastAPI, port 8000)
       ↓ creates LiveKit room + dispatches agent
-  LiveKit Server (real-time audio, port 7880)
+  TwilioLiveKitBridge (WebSocket /twilio/stream/<room>)
+      ↓ decodes Twilio JSON envelope → raw PCM → LiveKit AudioFrame
+  LiveKit Server (real-time audio SFU, port 7880)
       ↓ one room per call
-  Agent Worker Pool (one Pipecat pipeline per call)
+  Agent Worker Pool (one pipeline per call)
       ↓
   Deepgram STT → Azure OpenAI GPT-4o → ElevenLabs TTS
       ↓ knowledge base lookup via ChromaDB before each LLM call
-  Audio response → LiveKit → Twilio → Caller's ear
+  Audio response → LiveKit → Bridge (re-encodes PCM → μ-law) → Twilio → Caller's ear
 
 Target: <600ms end-to-end latency, 100 concurrent calls
 ```
@@ -52,11 +55,11 @@ Target: <600ms end-to-end latency, 100 concurrent calls
 
 ### Recommended Instance
 
-| Use Case | Instance | vCPU | RAM |
-|---|---|---|---|
-| Development / demo | t3.large | 2 | 8 GB |
-| 10–20 concurrent calls | t3.xlarge | 4 | 16 GB |
-| 100 concurrent calls | t3.2xlarge | 8 | 32 GB |
+| Use Case               | Instance   | vCPU | RAM   |
+| ---------------------- | ---------- | ---- | ----- |
+| Development / demo     | t3.large   | 2    | 8 GB  |
+| 10–20 concurrent calls | t3.xlarge  | 4    | 16 GB |
+| 100 concurrent calls   | t3.2xlarge | 8    | 32 GB |
 
 ### Launch Steps
 
@@ -66,13 +69,13 @@ Target: <600ms end-to-end latency, 100 concurrent calls
 4. Under **Key pair** — create or select an existing key pair (you'll need this to SSH in)
 5. Under **Network settings → Edit**, configure Security Group:
 
-   | Type | Protocol | Port Range | Source | Why |
-   |---|---|---|---|---|
-   | SSH | TCP | 22 | Your IP | Admin access |
-   | HTTP | TCP | 80 | 0.0.0.0/0 | Twilio webhooks + Nginx |
-   | Custom TCP | TCP | 7880 | 0.0.0.0/0 | LiveKit HTTP/WebSocket |
-   | Custom TCP | TCP | 7881 | 0.0.0.0/0 | LiveKit RTC TCP |
-   | Custom UDP | UDP | 7882 | 0.0.0.0/0 | LiveKit RTC UDP (critical for audio!) |
+   | Type       | Protocol | Port Range | Source    | Why                                   |
+   | ---------- | -------- | ---------- | --------- | ------------------------------------- |
+   | SSH        | TCP      | 22         | Your IP   | Admin access                          |
+   | HTTP       | TCP      | 80         | 0.0.0.0/0 | Twilio webhooks + Nginx               |
+   | Custom TCP | TCP      | 7880       | 0.0.0.0/0 | LiveKit HTTP/WebSocket                |
+   | Custom TCP | TCP      | 7881       | 0.0.0.0/0 | LiveKit RTC TCP                       |
+   | Custom UDP | UDP      | 7882       | 0.0.0.0/0 | LiveKit RTC UDP (critical for audio!) |
 
 6. Storage: **30 GB gp3** (minimum)
 7. Launch instance and note the **Public IPv4 address**
@@ -165,6 +168,7 @@ MAX_CONCURRENT_CALLS=100
 WORKER_POOL_SIZE=100
 LOG_LEVEL=INFO
 WEBHOOK_PORT=8000
+WEBHOOK_PUBLIC_URL=https://<AWS-PUBLIC-IP>
 
 # ── ChromaDB ──────────────────────────────────────
 CHROMA_PERSIST_DIR=/opt/voice-ai-agent/data/chromadb
@@ -194,6 +198,7 @@ docker compose ps
 ```
 
 Expected output:
+
 ```
 NAME         STATUS    PORTS
 livekit      running   (host network)
@@ -204,12 +209,14 @@ nginx        running   0.0.0.0:80->80/tcp
 ```
 
 **Verify LiveKit is up:**
+
 ```bash
 curl http://localhost:7880/
 # Should return: LiveKit server info JSON
 ```
 
 **View logs if something failed:**
+
 ```bash
 docker compose logs livekit
 docker compose logs nginx
@@ -248,6 +255,7 @@ python scripts/seed_knowledge_base.py
 ```
 
 Expected output:
+
 ```
 [6 verification queries all returning results]
 ✅ Knowledge base ready!
@@ -265,16 +273,19 @@ python -m services.webhook.main
 ```
 
 You should see:
+
 ```
 INFO  webhook_service_ready  port=8000  max_concurrent_calls=100  worker_pool_size=100
 ```
 
 **Test it's running (from your laptop or another terminal):**
+
 ```bash
 curl http://<AWS-PUBLIC-IP>/health
 ```
 
 Expected:
+
 ```json
 {
   "status": "healthy",
@@ -298,6 +309,7 @@ curl -X POST "http://<AWS-PUBLIC-IP>/calls/simulate?room_name=demo-1"
 ```
 
 Response includes a `join_url`. Open it in your browser to talk to the AI:
+
 ```json
 {
   "call_id": "sim-demo-1-1234567890",
@@ -341,6 +353,14 @@ python tests/twilio_integration_test.py \
 
 ### Step 2: Configure webhook URL in Twilio
 
+First, set `WEBHOOK_PUBLIC_URL` in your `.env` to your server's public address:
+
+```
+WEBHOOK_PUBLIC_URL=https://<AWS-PUBLIC-IP>
+```
+
+This is used by the system to tell Twilio where to stream audio. Twilio must be able to reach this URL from the internet.
+
 Run the integration test — it auto-configures the webhook for you:
 
 ```bash
@@ -349,6 +369,7 @@ python tests/twilio_integration_test.py \
 ```
 
 Or configure it manually:
+
 1. Go to **Twilio Console → Phone Numbers → Manage → Active Numbers**
 2. Click your number
 3. Under **Voice & Fax**:
@@ -359,20 +380,21 @@ Or configure it manually:
 ### Step 3: Make a test call
 
 Call your Twilio number from your mobile.  
-You should hear the AI agent greet you: *"Hello! Thank you for calling Acme Corp. How can I help you today?"*
+You should hear the AI agent greet you: _"Hello! Thank you for calling Acme Corp. How can I help you today?"_
 
 **Try these test phrases:**
+
 - "What is your refund policy?" → AI answers from knowledge base
 - "This is too expensive" → AI handles the objection
 - "Can I track my order?" → AI answers from FAQ
 
 ### Twilio Free Trial Limitations
 
-| Limitation | Workaround |
-|---|---|
-| Can only call verified numbers | Verify your personal mobile at console.twilio.com |
-| Calls have "Twilio trial" announcement | Upgrade to paid ($20 minimum) |
-| Limited concurrent calls | Fine for testing; paid tier supports 100+ |
+| Limitation                             | Workaround                                        |
+| -------------------------------------- | ------------------------------------------------- |
+| Can only call verified numbers         | Verify your personal mobile at console.twilio.com |
+| Calls have "Twilio trial" announcement | Upgrade to paid ($20 minimum)                     |
+| Limited concurrent calls               | Fine for testing; paid tier supports 100+         |
 
 ---
 
@@ -432,6 +454,7 @@ python tests/load_test.py --calls 100 --hold 30
 ```
 
 **What to check in the output:**
+
 - `LiveKit connected` should be 100% (or close)
 - `Agent responded` should be > 95%
 - `avg agent response time` should be < 600ms
@@ -460,6 +483,7 @@ sudo systemctl restart voice-ai-agent
 ```
 
 **Auto-start Docker on reboot:**
+
 ```bash
 sudo systemctl enable docker
 ```
@@ -469,6 +493,7 @@ sudo systemctl enable docker
 ## Troubleshooting
 
 ### "LiveKit not reachable"
+
 ```bash
 # Check if container is running
 docker compose ps livekit
@@ -482,6 +507,7 @@ nc -zv <AWS-IP> 7882  # UDP
 ```
 
 ### "Agent not responding to audio"
+
 ```bash
 # Check webhook logs
 sudo journalctl -u voice-ai-agent -f
@@ -502,6 +528,7 @@ print(r.choices[0].message.content)
 ```
 
 ### "Twilio webhook not firing"
+
 ```bash
 # Verify your EC2 port 80 is open in Security Group
 # Verify nginx is running
@@ -513,6 +540,7 @@ curl http://localhost/health
 ```
 
 ### "High latency (>600ms)"
+
 The biggest bottleneck is usually Azure OpenAI time-to-first-token.
 
 ```bash
@@ -524,6 +552,7 @@ The biggest bottleneck is usually Azure OpenAI time-to-first-token.
 ```
 
 ### "Out of memory / system slow"
+
 ```bash
 # Check memory usage
 free -h
@@ -542,33 +571,34 @@ docker stats
 
 These operate at different layers and complement each other:
 
-| | LiveKit | Pipecat |
-|---|---|---|
-| **What it is** | Real-time audio/video infrastructure (SFU) | AI voice pipeline framework |
-| **Layer** | Network/Transport | Application/AI logic |
-| **Responsibility** | Route audio between participants, WebRTC, 100 concurrent rooms | STT→LLM→TTS pipeline, barge-in, turn-taking |
-| **Barge-in support** | No | Built-in |
-| **AI service integrations** | None | Deepgram, OpenAI, ElevenLabs, 20+ others |
-| **Scale** | Thousands of rooms natively | Depends on worker infra |
-| **Self-hostable** | Yes (open source) | Yes (open source Python) |
+|                             | LiveKit                                                        | Pipecat                                     |
+| --------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| **What it is**              | Real-time audio/video infrastructure (SFU)                     | AI voice pipeline framework                 |
+| **Layer**                   | Network/Transport                                              | Application/AI logic                        |
+| **Responsibility**          | Route audio between participants, WebRTC, 100 concurrent rooms | STT→LLM→TTS pipeline, barge-in, turn-taking |
+| **Barge-in support**        | No                                                             | Built-in                                    |
+| **AI service integrations** | None                                                           | Deepgram, OpenAI, ElevenLabs, 20+ others    |
+| **Scale**                   | Thousands of rooms natively                                    | Depends on worker infra                     |
+| **Self-hostable**           | Yes (open source)                                              | Yes (open source Python)                    |
 
 **Analogy:** LiveKit is the highway. Pipecat is the car. You need both.
 
 ### What Breaks at 1,000 Calls
 
-| Component | Why It Breaks | Fix |
-|---|---|---|
-| Single LiveKit server | ~200–500 room limit per node | LiveKit cluster (3–5 nodes + Redis) |
-| Single VM workers | 1,000 Python processes = ~200GB RAM | Kubernetes HPA across 10+ nodes |
-| Deepgram API | Rate limits on standard tier | Enterprise agreement or self-host Whisper |
-| Azure OpenAI | Per-deployment token limits | Multiple deployments across regions + router |
-| Single nginx | ~10k req/s max for single process | Multiple nginx + AWS ALB in front |
+| Component             | Why It Breaks                       | Fix                                          |
+| --------------------- | ----------------------------------- | -------------------------------------------- |
+| Single LiveKit server | ~200–500 room limit per node        | LiveKit cluster (3–5 nodes + Redis)          |
+| Single VM workers     | 1,000 Python processes = ~200GB RAM | Kubernetes HPA across 10+ nodes              |
+| Deepgram API          | Rate limits on standard tier        | Enterprise agreement or self-host Whisper    |
+| Azure OpenAI          | Per-deployment token limits         | Multiple deployments across regions + router |
+| Single nginx          | ~10k req/s max for single process   | Multiple nginx + AWS ALB in front            |
 
 ### Current Latency Bottleneck
 
 LLM time-to-first-token is the dominant cost (~200–350ms of the 600ms budget).
 
 Fix options (in order of impact):
+
 1. Use `gpt-4o-mini` for simple queries → drops to ~100ms
 2. Use streaming aggressively (already done) → saves 200ms vs. batch
 3. Cache common responses (FAQs) → drops to ~0ms for cached

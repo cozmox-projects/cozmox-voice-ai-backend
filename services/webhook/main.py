@@ -18,30 +18,32 @@ Run:
   cd /opt/voice-ai-agent
   python -m services.webhook.main
 """
+
 import asyncio
-import os
-import sys
+import base64
 import hashlib
 import hmac as hmac_lib
-import base64
+import os
+import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)
-))))
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
-from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
+from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 
 from config import get_settings
 from logger import get_logger
-from services.webhook.livekit_manager import get_livekit_manager
 from services.agent.dispatcher import get_dispatcher
-from services.metrics.collector import calls_total, calls_active, calls_failed_setup
+from services.metrics.collector import calls_active, calls_failed_setup, calls_total
+from services.webhook.livekit_manager import get_livekit_manager
+from services.webhook.twilio_stream_bridge import router as bridge_router
 
 log = get_logger(__name__)
 settings = get_settings()
@@ -57,6 +59,9 @@ app = FastAPI(
 
 Instrumentator().instrument(app).expose(app, endpoint="/instrumentator-metrics")
 
+# Mount the Twilio Media Streams ↔ LiveKit bridge WebSocket routes
+app.include_router(bridge_router)
+
 # ── In-memory call registry ───────────────────────────────────────────────────
 active_calls: dict[str, dict] = {}
 
@@ -64,6 +69,7 @@ active_calls: dict[str, dict] = {}
 # ═════════════════════════════════════════════════════════════════════════════
 #  STARTUP / SHUTDOWN
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 @app.on_event("startup")
 async def on_startup():
@@ -87,6 +93,7 @@ async def on_shutdown():
 # ═════════════════════════════════════════════════════════════════════════════
 #  HEALTH + METRICS
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 @app.get("/health")
 async def health_check():
@@ -121,6 +128,7 @@ async def list_active_calls():
 #  TWILIO WEBHOOKS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @app.post("/twilio/incoming")
 async def handle_incoming_call(request: Request):
     """
@@ -134,9 +142,9 @@ async def handle_incoming_call(request: Request):
       5. Return TwiML telling Twilio to stream audio to LiveKit
     """
     form_data = await request.form()
-    call_sid  = form_data.get("CallSid",  f"unknown-{int(datetime.utcnow().timestamp())}")
-    caller    = form_data.get("From",     "unknown")
-    called    = form_data.get("To",       "unknown")
+    call_sid = form_data.get("CallSid", f"unknown-{int(datetime.utcnow().timestamp())}")
+    caller = form_data.get("From", "unknown")
+    called = form_data.get("To", "unknown")
 
     calls_total.inc()
     log.info("incoming_call", call_sid=call_sid, from_number=caller, to_number=called)
@@ -162,31 +170,31 @@ async def handle_incoming_call(request: Request):
         return Response(content=str(twiml), media_type="application/xml")
 
     # ── Create LiveKit room ───────────────────────────────────────────────
-    room_name  = f"call-{call_sid}"
+    room_name = f"call-{call_sid}"
     lk_manager = get_livekit_manager()
 
     try:
         await lk_manager.create_room(room_name)
-        caller_token = lk_manager.generate_caller_token(
-            room_name=room_name,
-            caller_identity=f"caller-{call_sid}",
-        )
-        lk_ws_url = lk_manager.get_livekit_ws_url(room_name, caller_token)
+        # NOTE: No caller token needed here. The TwilioLiveKitBridge
+        # generates its own token and joins the room as "caller-bridge-<room>".
     except Exception as e:
         log.error("livekit_setup_failed", call_sid=call_sid, error=str(e))
         calls_failed_setup.inc()
         twiml = VoiceResponse()
-        twiml.say("We are having technical difficulties. Please try again shortly.", voice="alice")
+        twiml.say(
+            "We are having technical difficulties. Please try again shortly.",
+            voice="alice",
+        )
         twiml.hangup()
         return Response(content=str(twiml), media_type="application/xml")
 
     # ── Register call ─────────────────────────────────────────────────────
     active_calls[call_sid] = {
-        "call_sid":   call_sid,
-        "room_name":  room_name,
-        "caller":     caller,
-        "called":     called,
-        "status":     "setting_up",
+        "call_sid": call_sid,
+        "room_name": room_name,
+        "caller": caller,
+        "called": called,
+        "status": "setting_up",
         "started_at": datetime.utcnow().isoformat(),
     }
     calls_active.inc()
@@ -204,10 +212,19 @@ async def handle_incoming_call(request: Request):
 
     active_calls[call_sid]["status"] = "agent_connecting"
 
-    # ── TwiML: stream audio to LiveKit ────────────────────────────────────
+    # ── TwiML: stream audio to our bridge (which forwards to LiveKit) ────────
+    # NOTE: Twilio <Stream> sends audio to OUR WebSocket bridge endpoint.
+    # The bridge (/twilio/stream/<room_name>) speaks Twilio's JSON envelope
+    # protocol, decodes it, and forwards raw PCM audio into the LiveKit room.
+    # This is required because LiveKit does not natively accept Twilio's
+    # Media Streams WebSocket format.
+    bridge_ws_url = (
+        f"{settings.webhook_public_url.replace('https://', 'wss://').replace('http://', 'ws://')}"
+        f"/twilio/stream/{room_name}"
+    )
     twiml = VoiceResponse()
     connect = Connect()
-    connect.stream(url=lk_ws_url)
+    connect.stream(url=bridge_ws_url)
     twiml.append(connect)
 
     log.info("call_routed", call_sid=call_sid, room=room_name)
@@ -218,11 +235,13 @@ async def handle_incoming_call(request: Request):
 async def handle_call_status(request: Request):
     """Twilio status callback — cleans up when a call ends."""
     form_data = await request.form()
-    call_sid  = form_data.get("CallSid",    "unknown")
-    status    = form_data.get("CallStatus", "unknown")
-    duration  = form_data.get("CallDuration", "0")
+    call_sid = form_data.get("CallSid", "unknown")
+    status = form_data.get("CallStatus", "unknown")
+    duration = form_data.get("CallDuration", "0")
 
-    log.info("call_status_update", call_sid=call_sid, status=status, duration_secs=duration)
+    log.info(
+        "call_status_update", call_sid=call_sid, status=status, duration_secs=duration
+    )
 
     terminal = {"completed", "failed", "busy", "no-answer", "canceled"}
     if status in terminal and call_sid in active_calls:
@@ -239,6 +258,7 @@ async def handle_call_status(request: Request):
 #  SIMULATION (no Twilio needed — use on AWS for testing)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @app.post("/calls/simulate")
 async def simulate_call(room_name: str = "test-room-1"):
     """
@@ -250,7 +270,7 @@ async def simulate_call(room_name: str = "test-room-1"):
     The response includes a caller_token — use it in the LiveKit Meet demo
     app (https://meet.livekit.io) to join as the caller and talk to the AI.
     """
-    call_id    = f"sim-{room_name}-{int(datetime.utcnow().timestamp())}"
+    call_id = f"sim-{room_name}-{int(datetime.utcnow().timestamp())}"
     lk_manager = get_livekit_manager()
 
     await lk_manager.create_room(room_name)
@@ -260,10 +280,10 @@ async def simulate_call(room_name: str = "test-room-1"):
     )
 
     active_calls[call_id] = {
-        "call_sid":   call_id,
-        "room_name":  room_name,
-        "caller":     "simulated",
-        "status":     "simulated",
+        "call_sid": call_id,
+        "room_name": room_name,
+        "caller": "simulated",
+        "status": "simulated",
         "started_at": datetime.utcnow().isoformat(),
     }
     calls_total.inc()
@@ -273,11 +293,11 @@ async def simulate_call(room_name: str = "test-room-1"):
     await dispatcher.dispatch(call_id=call_id, room_name=room_name)
 
     return {
-        "call_id":         call_id,
-        "room_name":       room_name,
-        "livekit_url":     settings.livekit_url,
-        "caller_token":    caller_token,
-        "active_calls":    len(active_calls),
+        "call_id": call_id,
+        "room_name": room_name,
+        "livekit_url": settings.livekit_url,
+        "caller_token": caller_token,
+        "active_calls": len(active_calls),
         "available_slots": dispatcher.available_slots(),
         "join_url": (
             f"https://meet.livekit.io/custom?"
@@ -291,18 +311,19 @@ async def simulate_call(room_name: str = "test-room-1"):
 #  HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _validate_twilio_signature(request: Request, form_params: dict) -> bool:
     """Validates X-Twilio-Signature header."""
     try:
-        signature  = request.headers.get("X-Twilio-Signature", "")
-        url        = str(request.url)
+        signature = request.headers.get("X-Twilio-Signature", "")
+        url = str(request.url)
         auth_token = settings.twilio_auth_token
 
         s = url
         for key in sorted(form_params.keys()):
             s += key + str(form_params[key])
 
-        mac      = hmac_lib.new(auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1)
+        mac = hmac_lib.new(auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1)
         expected = base64.b64encode(mac.digest()).decode("utf-8")
         return hmac_lib.compare_digest(expected, signature)
     except Exception as e:

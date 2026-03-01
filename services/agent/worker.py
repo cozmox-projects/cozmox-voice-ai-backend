@@ -27,12 +27,7 @@ from livekit import rtc
 from config import get_settings
 from logger import get_logger
 from services.agent.pipeline import VoiceAIPipeline
-from services.metrics.collector import (
-    calls_active,
-    calls_completed,
-    calls_failed_setup,
-    workers_active,
-)
+from services.metrics.collector import calls_active, calls_completed, calls_failed_setup
 
 log = get_logger(__name__)
 settings = get_settings()
@@ -60,7 +55,9 @@ class AgentWorker:
 
     async def run(self):
         """Main entry point. Blocks until the call ends."""
-        workers_active.inc()
+        # NOTE: workers_active is managed by the dispatcher (WorkerPoolDispatcher).
+        # Do NOT increment/decrement it here — the dispatcher already does this
+        # when it acquires/releases the semaphore slot, preventing double-counting.
         calls_active.inc()
 
         try:
@@ -73,7 +70,6 @@ class AgentWorker:
             raise
         finally:
             await self._teardown()
-            workers_active.dec()
             calls_active.dec()
 
     async def _setup(self):

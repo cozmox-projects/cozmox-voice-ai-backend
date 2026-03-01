@@ -18,19 +18,22 @@ Usage:
   python tests/twilio_integration_test.py --webhook-url https://your-ngrok-url.ngrok.io
   python tests/twilio_integration_test.py --webhook-url http://<AWS-IP>
 """
-import asyncio
-import sys
-import os
+
 import argparse
+import asyncio
+import os
+import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import httpx
 from twilio.rest import Client as TwilioClient
+
 from config import get_settings
 from logger import get_logger
 
@@ -57,15 +60,20 @@ def test_webhook_reachable(webhook_url: str) -> bool:
     print(f"\n[2/4] Checking webhook is reachable at {webhook_url}...")
     try:
         import httpx as _httpx
+
         with _httpx.Client(timeout=10) as client:
             r = client.get(f"{webhook_url}/health")
             data = r.json()
-            print(f"      ✅ Webhook reachable: status={data.get('status')}, "
-                  f"slots={data.get('available_slots')}")
+            print(
+                f"      ✅ Webhook reachable: status={data.get('status')}, "
+                f"slots={data.get('available_slots')}"
+            )
             return True
     except Exception as e:
         print(f"      ❌ Not reachable: {e}")
-        print(f"         Make sure your webhook is running and accessible from the internet.")
+        print(
+            f"         Make sure your webhook is running and accessible from the internet."
+        )
         print(f"         On AWS: ensure port 80 is open in your Security Group.")
         return False
 
@@ -82,7 +90,9 @@ def configure_twilio_webhook(webhook_url: str) -> bool:
         )
 
         if not numbers:
-            print(f"      ❌ Phone number {settings.twilio_phone_number} not found in account")
+            print(
+                f"      ❌ Phone number {settings.twilio_phone_number} not found in account"
+            )
             return False
 
         phone_sid = numbers[0].sid
@@ -112,7 +122,10 @@ def make_test_call(webhook_url: str) -> bool:
     """
     print(f"\n[4/4] Making test call to {settings.twilio_phone_number}...")
 
-    if not settings.twilio_phone_number or settings.twilio_phone_number == "+1xxxxxxxxxx":
+    if (
+        not settings.twilio_phone_number
+        or settings.twilio_phone_number == "+1xxxxxxxxxx"
+    ):
         print("      ⚠️  No Twilio phone number configured.")
         print("         Set TWILIO_PHONE_NUMBER in .env to your Twilio trial number.")
         print("         You can still test using the simulate endpoint:")
@@ -137,7 +150,9 @@ def make_test_call(webhook_url: str) -> bool:
         print(f"      ✅ Call initiated!")
         print(f"         Call SID:  {call.sid}")
         print(f"         Status:    {call.status}")
-        print(f"         Watch it:  https://console.twilio.com/us1/monitor/logs/calls/{call.sid}")
+        print(
+            f"         Watch it:  https://console.twilio.com/us1/monitor/logs/calls/{call.sid}"
+        )
         print()
         print(f"      ⏳ Waiting 10s then checking call status...")
 
@@ -163,8 +178,11 @@ def run_simulation_test(webhook_url: str):
     print(f"\n  Running simulation test (no Twilio phone call needed)...")
     try:
         import httpx as _httpx
+
         with _httpx.Client(timeout=15) as client:
-            r = client.post(f"{webhook_url}/calls/simulate?room_name=integration-test-1")
+            r = client.post(
+                f"{webhook_url}/calls/simulate?room_name=integration-test-1"
+            )
             r.raise_for_status()
             data = r.json()
 
@@ -178,14 +196,18 @@ def run_simulation_test(webhook_url: str):
         print(f"     {data.get('join_url', 'N/A')}")
         print()
         print(f"  👉 Or use lk CLI:")
-        print(f"     lk room join --url {settings.livekit_url} --token {data['caller_token']}")
+        print(
+            f"     lk room join --url {settings.livekit_url} --token {data['caller_token']}"
+        )
 
     except Exception as e:
         print(f"  ❌ Simulation failed: {e}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Twilio + Voice AI Agent integration")
+    parser = argparse.ArgumentParser(
+        description="Test Twilio + Voice AI Agent integration"
+    )
     parser.add_argument(
         "--webhook-url",
         default=f"http://localhost:{settings.webhook_port}",

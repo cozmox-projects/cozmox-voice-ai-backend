@@ -217,7 +217,7 @@ class VoiceAIPipeline:
             )
 
         try:
-            stream = await llm_circuit_breaker.call(_call)
+            stream = await llm_circuit_breaker.call(_call_llm)
 
             # If circuit breaker returned fallback string
             if isinstance(stream, str):

@@ -2,9 +2,11 @@
 config.py — Central configuration loaded from .env
 All services import settings from here.
 """
-from pydantic_settings import BaseSettings
-from pydantic import Field
+
 from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -14,8 +16,12 @@ class Settings(BaseSettings):
     # ── Azure OpenAI ──────────────────────────────────────────────────────
     azure_openai_api_key: str = Field(..., env="AZURE_OPENAI_API_KEY")
     azure_openai_endpoint: str = Field(..., env="AZURE_OPENAI_ENDPOINT")
-    azure_openai_deployment: str = Field(default="gpt-4o", env="AZURE_OPENAI_DEPLOYMENT")
-    azure_openai_api_version: str = Field(default="2024-02-01", env="AZURE_OPENAI_API_VERSION")
+    azure_openai_deployment: str = Field(
+        default="gpt-4o", env="AZURE_OPENAI_DEPLOYMENT"
+    )
+    azure_openai_api_version: str = Field(
+        default="2024-02-01", env="AZURE_OPENAI_API_VERSION"
+    )
 
     # ── ElevenLabs ────────────────────────────────────────────────────────
     elevenlabs_api_key: str = Field(..., env="ELEVENLABS_API_KEY")
@@ -35,9 +41,14 @@ class Settings(BaseSettings):
 
     # ── App ───────────────────────────────────────────────────────────────
     max_concurrent_calls: int = Field(default=100, env="MAX_CONCURRENT_CALLS")
-    worker_pool_size: int = Field(default=10, env="WORKER_POOL_SIZE")
+    worker_pool_size: int = Field(default=100, env="WORKER_POOL_SIZE")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     webhook_port: int = Field(default=8000, env="WEBHOOK_PORT")
+    # Public HTTPS/WSS URL of this webhook service (needed for TwiML <Stream>)
+    # e.g. "https://your-ec2-ip-or-domain" — Twilio must reach this over the internet
+    webhook_public_url: str = Field(
+        default="http://localhost:8000", env="WEBHOOK_PUBLIC_URL"
+    )
 
     # ── ChromaDB ──────────────────────────────────────────────────────────
     chroma_persist_dir: str = Field(default="./data/chromadb", env="CHROMA_PERSIST_DIR")
