@@ -306,7 +306,7 @@ class VoiceAIPipeline:
                 "text": text,
                 "model_id": "eleven_turbo_v2_5",
                 "voice_settings": {"stability": 0.5, "similarity_boost": 0.8},
-                "output_format": "ulaw_8000",
+                "output_format": "pcm_16000",
             }
             first_chunk = True
             async with httpx.AsyncClient(timeout=30) as client:

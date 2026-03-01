@@ -91,7 +91,7 @@ class AgentWorker:
         log.info("worker_connected_to_room", call_id=self.call_id, room=self.room_name)
 
         # Create an audio source — this is how we send TTS audio to the caller
-        self._audio_source = rtc.AudioSource(sample_rate=8000, num_channels=1)
+        self._audio_source = rtc.AudioSource(sample_rate=16000, num_channels=1)
         self._audio_track = rtc.LocalAudioTrack.create_audio_track(
             "agent-audio", self._audio_source
         )
@@ -197,23 +197,18 @@ class AgentWorker:
         """
         Sends TTS audio bytes back to the caller via LiveKit.
 
-        ElevenLabs returns μ-law (ulaw) encoded audio at 8kHz.
-        LiveKit AudioFrame requires int16 PCM samples.
-        We use Python's audioop.ulaw2lin() which implements ITU-T G.711 correctly.
+        ElevenLabs returns pcm_16000 — raw int16 little-endian PCM at 16kHz.
+        LiveKit AudioFrame expects the same format, so we pass bytes directly
+        with no decoding step. AudioSource is also configured at 16000Hz.
         """
         if not self._audio_source or not audio_bytes:
             return
         try:
-            import audioop
-
-            # μ-law → int16 PCM (ITU-T G.711, width=2 means 16-bit output)
-            pcm_bytes = audioop.ulaw2lin(audio_bytes, 2)
-
             frame = rtc.AudioFrame(
-                data=pcm_bytes,
-                sample_rate=8000,
+                data=audio_bytes,
+                sample_rate=16000,
                 num_channels=1,
-                samples_per_channel=len(pcm_bytes) // 2,
+                samples_per_channel=len(audio_bytes) // 2,
             )
             await self._audio_source.capture_frame(frame)
         except Exception as e:
