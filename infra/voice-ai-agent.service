@@ -1,0 +1,25 @@
+[Unit]
+Description=Voice AI Agent — Webhook Service
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/voice-ai-agent
+EnvironmentFile=/opt/voice-ai-agent/.env
+ExecStart=/usr/bin/python3 -m services.webhook.main
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voice-ai-agent
+
+# Give it time to shut down gracefully
+TimeoutStopSec=30
+
+# Resource limits (adjust based on EC2 instance type)
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

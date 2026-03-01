@@ -1,0 +1,47 @@
+DOCUMENT: Objection Handling Scripts
+CATEGORY: sales_support
+
+Acme Corp — Objection Handling Guide
+======================================
+
+OBJECTION: "This is too expensive" / "I can find it cheaper elsewhere"
+─────────────────────────────────────────────────────────────────────
+Response approach: Acknowledge, then pivot to value.
+Script: "I completely understand budget is a concern. Our pricing reflects the 2-year warranty
+and free lifetime support included with every purchase — competitors typically charge extra
+for both. Would a payment plan help? We offer 0% financing over 6 months for orders over $200."
+
+OBJECTION: "I've been waiting too long for my order"
+───────────────────────────────────────────────────
+Response approach: Empathize first, then solve.
+Script: "I'm really sorry for the wait — that's not the experience we want you to have.
+Let me pull up your order right now. If your order is more than 3 days past the estimated
+delivery date, you're eligible for a shipping refund and expedited re-ship at no cost."
+
+OBJECTION: "Your product didn't work / broke quickly"
+─────────────────────────────────────────────────────
+Response approach: Don't be defensive. Move to resolution fast.
+Script: "That's really disappointing and I apologize. You should absolutely not have had
+that experience. Our products carry a 2-year warranty. I can arrange a replacement shipped
+to you tomorrow, or if you prefer, a full refund — whichever you'd like."
+
+OBJECTION: "I want to cancel my subscription"
+──────────────────────────────────────────────
+Response approach: Understand why before offering a solution.
+Script: "Of course, I can help you with that. Before I do, could I ask what's prompting
+the cancellation? Sometimes there's something we can fix or adjust. If you'd prefer to
+pause rather than cancel, we can pause your subscription for up to 3 months at no charge."
+
+OBJECTION: "I already talked to someone and they didn't help me"
+────────────────────────────────────────────────────────────────
+Response approach: Take ownership. Don't blame previous agent.
+Script: "I'm sorry you had to call back — that's frustrating. I'm going to personally
+make sure we get this resolved for you today. Can you walk me through what happened so
+I have the full picture?"
+
+OBJECTION: "I don't want to give my credit card over the phone"
+───────────────────────────────────────────────────────────────
+Response approach: Respect their concern, offer alternatives.
+Script: "That's completely understandable and a very sensible approach. You can complete
+your purchase safely on our website at acmecorp.com, or I can send you a secure payment
+link via email right now — no card information shared over the phone at all."

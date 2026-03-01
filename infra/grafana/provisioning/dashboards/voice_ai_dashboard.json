@@ -1,0 +1,147 @@
+{
+  "dashboard": {
+    "title": "Voice AI Agent — Live Metrics",
+    "uid": "voice-ai-dashboard",
+    "timezone": "browser",
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Concurrent Calls",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+        "targets": [{
+          "expr": "voice_ai_calls_active",
+          "legendFormat": "Active Calls"
+        }],
+        "options": {
+          "colorMode": "background",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "red", "value": 95 }
+            ]
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Avg E2E Latency (ms)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+        "targets": [{
+          "expr": "rate(voice_ai_e2e_latency_seconds_sum[1m]) / rate(voice_ai_e2e_latency_seconds_count[1m]) * 1000",
+          "legendFormat": "Avg E2E ms"
+        }],
+        "options": {
+          "colorMode": "background",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 500 },
+              { "color": "red", "value": 600 }
+            ]
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Total Calls",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+        "targets": [{
+          "expr": "voice_ai_calls_total",
+          "legendFormat": "Total Calls"
+        }]
+      },
+      {
+        "id": 4,
+        "title": "Barge-ins",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+        "targets": [{
+          "expr": "voice_ai_barge_ins_total",
+          "legendFormat": "Barge-ins"
+        }]
+      },
+      {
+        "id": 5,
+        "title": "E2E Latency Distribution",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(voice_ai_e2e_latency_seconds_bucket[5m])) * 1000",
+            "legendFormat": "p50 (ms)"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(voice_ai_e2e_latency_seconds_bucket[5m])) * 1000",
+            "legendFormat": "p95 (ms)"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(voice_ai_e2e_latency_seconds_bucket[5m])) * 1000",
+            "legendFormat": "p99 (ms)"
+          }
+        ],
+        "yaxes": [{ "label": "Latency (ms)", "min": 0 }]
+      },
+      {
+        "id": 6,
+        "title": "Per-Stage Latency Breakdown",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          {
+            "expr": "rate(voice_ai_stt_latency_seconds_sum[1m]) / rate(voice_ai_stt_latency_seconds_count[1m]) * 1000",
+            "legendFormat": "STT avg (ms)"
+          },
+          {
+            "expr": "rate(voice_ai_llm_latency_seconds_sum[1m]) / rate(voice_ai_llm_latency_seconds_count[1m]) * 1000",
+            "legendFormat": "LLM avg (ms)"
+          },
+          {
+            "expr": "rate(voice_ai_tts_latency_seconds_sum[1m]) / rate(voice_ai_tts_latency_seconds_count[1m]) * 1000",
+            "legendFormat": "TTS avg (ms)"
+          }
+        ],
+        "yaxes": [{ "label": "Latency (ms)", "min": 0 }]
+      },
+      {
+        "id": 7,
+        "title": "API Error Rates",
+        "type": "graph",
+        "gridPos": { "h": 6, "w": 12, "x": 0, "y": 12 },
+        "targets": [
+          {
+            "expr": "rate(voice_ai_stt_errors_total[1m])",
+            "legendFormat": "STT errors/s"
+          },
+          {
+            "expr": "rate(voice_ai_llm_errors_total[1m])",
+            "legendFormat": "LLM errors/s"
+          },
+          {
+            "expr": "rate(voice_ai_tts_errors_total[1m])",
+            "legendFormat": "TTS errors/s"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Knowledge Base Hit Rate",
+        "type": "graph",
+        "gridPos": { "h": 6, "w": 12, "x": 12, "y": 12 },
+        "targets": [
+          {
+            "expr": "rate(voice_ai_kb_hits_total[1m]) / rate(voice_ai_kb_queries_total[1m]) * 100",
+            "legendFormat": "KB Hit Rate %"
+          }
+        ],
+        "yaxes": [{ "label": "Hit Rate (%)", "min": 0, "max": 100 }]
+      }
+    ],
+    "time": { "from": "now-15m", "to": "now" }
+  },
+  "overwrite": true
+}

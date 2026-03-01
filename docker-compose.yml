@@ -1,0 +1,132 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Voice AI Agent — Docker Compose (AWS Ubuntu VM)
+#
+#  Services:
+#    livekit     → Real-time audio SFU (port 7880, 7881, 7882/udp)
+#    redis       → Call state coordination
+#    prometheus  → Metrics collection (port 9090)
+#    grafana     → Metrics dashboard (port 3000)
+#    nginx       → Reverse proxy + SSL termination (port 80, 443)
+#
+#  Usage:
+#    docker-compose up -d
+#    docker-compose logs -f livekit
+#    docker-compose ps
+#
+#  NOTE: The Python webhook service + agent workers run directly on the VM
+#  (not in Docker) so they can use the GPU/CPU efficiently and be managed
+#  by systemd. See README for the full startup sequence.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── LiveKit Server ───────────────────────────────────────────────────────
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit
+    restart: unless-stopped
+    network_mode: host          # host networking needed for UDP RTC on AWS
+    volumes:
+      - ./infra/livekit.yaml:/etc/livekit.yaml:ro
+    command: --config /etc/livekit.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7880/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"   # bind to localhost only on AWS
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ── Prometheus ───────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"   # internal only — accessed via nginx
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets Prometheus scrape host services
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"   # internal only — accessed via nginx
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Nginx ─────────────────────────────────────────────────────────────────
+  # Reverse proxy. Routes:
+  #   /           → webhook service (port 8000)
+  #   /grafana/   → Grafana (port 3000)
+  #   /prometheus/ → Prometheus (port 9090)
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - grafana
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+
+volumes:
+  redis_data:
+  prometheus_data:
+  grafana_data:

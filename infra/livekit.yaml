@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  LiveKit Server Configuration — AWS deployment
+#
+#  IMPORTANT: Set AWS_PUBLIC_IP in your .env file to your EC2 instance's
+#  public IPv4 address. LiveKit needs this so WebRTC can work through NAT.
+#
+#  Find your EC2 public IP:
+#    curl -s http://169.254.169.254/latest/meta-data/public-ipv4
+# ─────────────────────────────────────────────────────────────────────────────
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  # CRITICAL for AWS: tell LiveKit the external public IP
+  # This is read from env var at runtime
+  use_external_ip: true
+
+# API keys — must match .env LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+keys:
+  devkey: devsecret
+
+# Room settings
+room:
+  empty_timeout: 300        # close empty rooms after 5 min
+  max_participants: 10      # per room: 1 caller + 1 agent + headroom
+  auto_create: true         # auto-create rooms on first participant join
+
+# Logging
+logging:
+  level: info
+  sample: false
+
+# Limits (for 100 concurrent calls)
+limit:
+  num_tracks: 1000
+  bytes_per_sec: 209715200  # 200 MB/s total bandwidth

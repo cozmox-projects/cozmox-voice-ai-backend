@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Prometheus Configuration — AWS deployment
+#
+#  host.docker.internal resolves to the EC2 host IP from inside Docker.
+#  This lets Prometheus (running in Docker) scrape the webhook service
+#  and agent workers (running directly on the host).
+# ─────────────────────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval:     5s
+  evaluation_interval: 5s
+  scrape_timeout:      4s
+
+scrape_configs:
+
+  # ── Webhook Service (FastAPI on host port 8000) ───────────────────────────
+  - job_name: "webhook_service"
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+    metrics_path: /metrics
+
+  # ── Prometheus itself ─────────────────────────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── LiveKit (if it exposes metrics in future versions) ────────────────────
+  - job_name: "livekit"
+    static_configs:
+      - targets: ["host.docker.internal:7880"]
+    metrics_path: /metrics
+    honor_labels: true

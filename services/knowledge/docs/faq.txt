@@ -1,0 +1,39 @@
+DOCUMENT: Frequently Asked Questions
+CATEGORY: general
+
+Acme Corp — Frequently Asked Questions
+========================================
+
+Q: What are your customer support hours?
+A: Our support team is available Monday through Friday, 9 AM to 6 PM Eastern Time.
+For urgent issues, our automated system is available 24/7.
+
+Q: How do I track my order?
+A: You can track your order by logging into your account at acmecorp.com and clicking
+"My Orders." You will also receive an email with a tracking link once your order ships.
+Orders typically ship within 2 business days.
+
+Q: What payment methods do you accept?
+A: We accept all major credit cards (Visa, Mastercard, American Express, Discover),
+PayPal, Apple Pay, Google Pay, and ACH bank transfers for orders over $500.
+
+Q: Do you offer free shipping?
+A: Yes. Orders over $75 qualify for free standard shipping within the United States.
+Expedited shipping is available for an additional fee.
+
+Q: How do I change or cancel my order?
+A: Orders can be modified or cancelled within 1 hour of placement. After that, the order
+enters processing and cannot be changed. Please contact support immediately if you need
+to make changes.
+
+Q: Do you ship internationally?
+A: We currently ship to the United States, Canada, the United Kingdom, and Australia.
+International orders may be subject to customs duties which are the customer's responsibility.
+
+Q: How do I reset my password?
+A: Click "Forgot Password" on the login page and enter your email address. You will receive
+a reset link within 5 minutes. If you don't receive it, check your spam folder.
+
+Q: Is my payment information secure?
+A: Yes. All transactions are encrypted using SSL and we are PCI DSS compliant.
+We never store your full credit card number on our servers.

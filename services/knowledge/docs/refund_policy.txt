@@ -1,0 +1,32 @@
+DOCUMENT: Refund Policy
+CATEGORY: billing
+
+Acme Corp Refund Policy
+========================
+
+Standard Refund Window:
+Customers may request a full refund within 30 days of purchase for any reason.
+After 30 days and up to 90 days, a 50% store credit refund is available.
+No refunds are issued after 90 days from the date of purchase.
+
+How to Request a Refund:
+Customers can request a refund by calling our support line, emailing support@acmecorp.com,
+or logging into their account portal and submitting a refund request under "Order History."
+
+Processing Time:
+Refunds to the original payment method are processed within 5 to 7 business days.
+Store credit refunds are applied instantly to the customer's account.
+
+Non-Refundable Items:
+Digital downloads that have been accessed are non-refundable.
+Customized or personalized orders are non-refundable.
+Subscription services are refunded on a prorated basis for the unused portion.
+
+Defective Products:
+If a product is defective or arrives damaged, customers are entitled to a full refund or
+replacement regardless of the 30-day window. Customers must provide a photo of the defect.
+
+Subscription Cancellation:
+Customers can cancel subscriptions at any time. The subscription remains active until the
+end of the current billing period. No partial refunds are given for mid-cycle cancellations
+unless the product is defective.
