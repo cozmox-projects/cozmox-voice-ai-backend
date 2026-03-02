@@ -20,10 +20,13 @@ import asyncio
 import time
 from typing import Any, Optional
 
-import httpx
+import aiohttp
 
 # Deepgram v3 — use asyncwebsocket (asynclive deprecated since 3.4.0)
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
+
+# ElevenLabs via LiveKit plugin — handles WebSocket streaming + MP3/PCM decode internally
+from livekit.plugins.elevenlabs import TTS as ElevenLabsTTS
 from openai import AsyncAzureOpenAI
 
 from config import get_settings
@@ -72,6 +75,15 @@ class VoiceAIPipeline:
             api_key=settings.azure_openai_api_key,
             azure_endpoint=settings.azure_openai_endpoint,
             api_version=settings.azure_openai_api_version,
+        )
+
+        # ElevenLabs TTS — uses livekit-plugins-elevenlabs which connects via WebSocket
+        # and decodes MP3 internally using PyAV. Default encoding is mp3_22050_32.
+        # This works on free tier unlike pcm_* formats.
+        self._tts = ElevenLabsTTS(
+            voice_id=settings.elevenlabs_voice_id,
+            model="eleven_turbo_v2_5",
+            api_key=settings.elevenlabs_api_key,
         )
 
         # Conversation history (keep last 10 turns to control token count)
@@ -300,57 +312,35 @@ class VoiceAIPipeline:
 
     async def _speak(self, text: str):
         """
-        Converts text to speech via ElevenLabs and sends audio to LiveKit.
-        Uses streaming — first audio chunk arrives in ~150ms.
+        Converts text to speech via the livekit-plugins-elevenlabs plugin.
+
+        The plugin connects to ElevenLabs via WebSocket (/multi-stream-input),
+        receives base64-encoded MP3 chunks in JSON messages, decodes them via
+        PyAV (the 'av' package), and yields raw int16 PCM frames at 22050 Hz.
+
+        We iterate the ChunkedStream and pipe each PCM AudioFrame directly
+        into our LiveKit AudioSource. No format detection, no pydub, no ffmpeg.
+        Works on free tier because MP3 is the native format the plugin expects.
         """
         if not text.strip():
             return
         self.barge_in.on_tts_started()
+        first_frame = True
         try:
-            url = (
-                f"https://api.elevenlabs.io/v1/text-to-speech"
-                f"/{settings.elevenlabs_voice_id}/stream"
-            )
-            headers = {
-                "xi-api-key": settings.elevenlabs_api_key,
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "text": text,
-                "model_id": "eleven_turbo_v2_5",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.8},
-                "output_format": "pcm_16000",
-            }
-            first_chunk = True
-            async with httpx.AsyncClient(timeout=30) as client:
-                async with client.stream(
-                    "POST", url, headers=headers, json=payload
-                ) as resp:
-                    resp.raise_for_status()
+            async with self._tts.synthesize(text) as stream:
+                async for audio_event in stream:
+                    if self.barge_in._interrupt_event.is_set():
+                        break
 
-                    async for chunk in resp.aiter_bytes(chunk_size=1024):
-                        # Check for barge-in before sending each chunk
-                        if self.barge_in._interrupt_event.is_set():
-                            break
-                        if first_chunk:
-                            self.latency_tracker.tts_first_audio()
-                            self.latency_tracker.report()
-                            first_chunk = False
-                            # DIAGNOSTIC: log what ElevenLabs actually sends
-                            log.info(
-                                "tts_chunk_diagnostic",
-                                call_id=self.call_id,
-                                content_type=resp.headers.get(
-                                    "content-type", "unknown"
-                                ),
-                                chunk_len=len(chunk),
-                                first_8_bytes=chunk[:8].hex(),
-                                is_riff=chunk[:4] == b"RIFF",
-                                is_id3=chunk[:3] == b"ID3",
-                            )
+                    if first_frame:
+                        self.latency_tracker.tts_first_audio()
+                        self.latency_tracker.report()
+                        first_frame = False
 
-                        # Send audio back to caller via LiveKit
-                        await self._send_audio(chunk)
+                    # audio_event.frame is an rtc.AudioFrame with:
+                    #   sample_rate=22050, num_channels=1, data=int16 PCM bytes
+                    await self._send_audio(bytes(audio_event.frame.data))
+
         except asyncio.CancelledError:
             log.info("tts_task_cancelled", call_id=self.call_id)
         except Exception as e:

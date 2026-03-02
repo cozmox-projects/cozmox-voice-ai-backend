@@ -90,8 +90,9 @@ class AgentWorker:
         )
         log.info("worker_connected_to_room", call_id=self.call_id, room=self.room_name)
 
-        # Create an audio source — this is how we send TTS audio to the caller
-        self._audio_source = rtc.AudioSource(sample_rate=16000, num_channels=1)
+        # Create an audio source — sample rate must match ElevenLabs plugin output.
+        # livekit-plugins-elevenlabs default encoding is mp3_22050_32 → decoded to 22050 Hz PCM.
+        self._audio_source = rtc.AudioSource(sample_rate=22050, num_channels=1)
         self._audio_track = rtc.LocalAudioTrack.create_audio_track(
             "agent-audio", self._audio_source
         )
@@ -195,32 +196,18 @@ class AgentWorker:
 
     async def _send_audio_to_livekit(self, audio_bytes: bytes):
         """
-        Sends TTS audio bytes back to the caller via LiveKit.
+        Sends TTS PCM audio to the caller via LiveKit.
 
-        ElevenLabs returns pcm_16000 — raw int16 little-endian PCM at 16kHz.
-        HTTP streaming chunks may arrive with an odd number of bytes, which
-        cannot be interpreted as int16 samples (2 bytes each). We buffer any
-        leftover odd byte across calls and prepend it to the next chunk.
+        By this point, the livekit-plugins-elevenlabs ChunkedStream has already
+        decoded MP3 → int16 PCM at 22050 Hz. We just wrap in an AudioFrame
+        and push to the AudioSource. No format conversion needed.
         """
         if not self._audio_source or not audio_bytes:
             return
         try:
-            # Prepend any leftover byte from previous chunk
-            if getattr(self, "_pcm_remainder", b""):
-                audio_bytes = self._pcm_remainder + audio_bytes
-                self._pcm_remainder = b""
-
-            # If odd length, hold the last byte for the next chunk
-            if len(audio_bytes) % 2 != 0:
-                self._pcm_remainder = audio_bytes[-1:]
-                audio_bytes = audio_bytes[:-1]
-
-            if not audio_bytes:
-                return
-
             frame = rtc.AudioFrame(
                 data=audio_bytes,
-                sample_rate=16000,
+                sample_rate=22050,
                 num_channels=1,
                 samples_per_channel=len(audio_bytes) // 2,
             )
