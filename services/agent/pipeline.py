@@ -77,13 +77,17 @@ class VoiceAIPipeline:
             api_version=settings.azure_openai_api_version,
         )
 
-        # ElevenLabs TTS — uses livekit-plugins-elevenlabs which connects via WebSocket
-        # and decodes MP3 internally using PyAV. Default encoding is mp3_22050_32.
-        # This works on free tier unlike pcm_* formats.
+        # ElevenLabs TTS via livekit-plugins-elevenlabs.
+        # We pass our own aiohttp.ClientSession because this plugin normally
+        # expects to run inside a LiveKit agent worker job context which sets
+        # up a shared session automatically. Since we run it standalone, we
+        # create and manage the session ourselves.
+        self._tts_session: Optional[aiohttp.ClientSession] = None
         self._tts = ElevenLabsTTS(
             voice_id=settings.elevenlabs_voice_id,
             model="eleven_turbo_v2_5",
             api_key=settings.elevenlabs_api_key,
+            http_session=None,  # will be set in start()
         )
 
         # Conversation history (keep last 10 turns to control token count)
@@ -104,6 +108,11 @@ class VoiceAIPipeline:
 
         self._pipeline_start_time = time.perf_counter()
         self._is_running = True
+
+        # Create the aiohttp session now that we're inside an async context
+        self._tts_session = aiohttp.ClientSession()
+        self._tts._session = self._tts_session
+
         log.info("pipeline_started", call_id=self.call_id)
 
         # Greet the caller
@@ -114,6 +123,8 @@ class VoiceAIPipeline:
         self._is_running = False
         if self._current_tts_task and not self._current_tts_task.done():
             self._current_tts_task.cancel()
+        if self._tts_session and not self._tts_session.closed:
+            await self._tts_session.close()
 
     # ── Deepgram connection ───────────────────────────────────────────────────
 
